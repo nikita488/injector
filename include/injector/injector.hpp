@@ -29,6 +29,7 @@
 #include <cstdint>
 #include <cstdio>
 #include "gvm/gvm.hpp"
+#include "..\shared\DynAddress.h"
 /*
     The following macros (#define) are relevant on this header:
 
@@ -54,8 +55,8 @@
         If defined, the game_version_manager should be implemented by the user before including this library.
         By default it provides a nice gvm for Grand Theft Auto series
 */
-#include "gvm/gvm.hpp"
 
+#include "gvm/gvm.hpp"
 
 
 namespace injector
@@ -436,7 +437,7 @@ inline memory_pointer_raw GetAbsoluteOffset(int rel_value, memory_pointer_tr end
  *  GetRelativeOffset
  *      Gets relative offset based on absolute address @abs_value for instruction that ends at @end_of_instruction
  */
-inline int GetRelativeOffset(memory_pointer_tr abs_value, memory_pointer_tr end_of_instruction)
+inline uintptr_t GetRelativeOffset(memory_pointer_tr abs_value, memory_pointer_tr end_of_instruction)
 {
     return uintptr_t(abs_value.get<char>() - end_of_instruction.get<char>());
 }
@@ -503,6 +504,10 @@ inline memory_pointer_raw GetBranchDestination(memory_pointer_tr at, bool vp = t
  */
 inline memory_pointer_raw MakeJMP(memory_pointer_tr at, memory_pointer_raw dest, bool vp = true)
 {
+#if !(defined (_M_IX86) || defined (_X86_))
+    dest = plugin::MakeTrampoline(at.as_int(), dest.get());
+#endif
+
     auto p = GetBranchDestination(at, vp);
     WriteMemory<uint8_t>(at, 0xE9, vp);
     MakeRelativeOffset(at+1, dest, 4, vp);
@@ -516,6 +521,10 @@ inline memory_pointer_raw MakeJMP(memory_pointer_tr at, memory_pointer_raw dest,
  */
 inline memory_pointer_raw MakeCALL(memory_pointer_tr at, memory_pointer_raw dest, bool vp = true)
 {
+#if !(defined (_M_IX86) || defined (_X86_))
+    dest = plugin::MakeTrampoline(at.as_int(), dest.get());
+#endif
+
     auto p = GetBranchDestination(at, vp);
     WriteMemory<uint8_t>(at, 0xE8, vp);
     MakeRelativeOffset(at+1, dest, 4, vp);
@@ -529,6 +538,10 @@ inline memory_pointer_raw MakeCALL(memory_pointer_tr at, memory_pointer_raw dest
  */
 inline void MakeJA(memory_pointer_tr at, memory_pointer_raw dest, bool vp = true)
 {
+#if !(defined (_M_IX86) || defined (_X86_))
+    dest = plugin::MakeTrampoline(at.as_int(), dest.get());
+#endif
+
     WriteMemory<uint16_t>(at, 0x87F0, vp);
     MakeRelativeOffset(at+2, dest, 4, vp);
 }
@@ -651,106 +664,6 @@ inline memory_pointer_aslr  aslr_ptr(T p)
 {
     return memory_pointer_aslr(p);
 }
-
-
-
-
-
-
-#ifndef INJECTOR_GVM_OWN_DETECT // Should we implement our detection method?
-
-// Detects game, region and version; returns false if could not detect it
-inline bool game_version_manager::Detect()
-{
-    // Cleanup data
-    this->Clear();
-
-    // Find NT header
-    uintptr_t          base     = (uintptr_t) GetModuleHandleA(NULL);
-    IMAGE_DOS_HEADER*  dos      = (IMAGE_DOS_HEADER*)(base);
-    IMAGE_NT_HEADERS*  nt       = (IMAGE_NT_HEADERS*)(base + dos->e_lfanew);
-            
-    // Look for game and version thought the entry-point
-    // Thanks to Silent for many of the entry point offsets
-    switch (base + nt->OptionalHeader.AddressOfEntryPoint + (0x400000 - base))
-    {
-        case 0x5C1E70:  // GTA III 1.0
-            game = '3', major = 1, minor = 0, region = 0, steam = false;
-            return true;
-            
-        case 0x5C2130:  // GTA III 1.1
-            game = '3', major = 1, minor = 1, region = 0, steam = false;
-            return true;
-            
-        case 0x5C6FD0:  // GTA III 1.1 (Cracked Steam Version)
-        case 0x9912ED:  // GTA III 1.1 (Encrypted Steam Version)
-            game = '3', major = 1, minor = 1, region = 0, steam = true;
-            return true;
-    
-        case 0x667BF0:  // GTA VC 1.0
-            game = 'V', major = 1, minor = 0, region = 0, steam = false;
-            return true;
-            
-        case 0x667C40:  // GTA VC 1.1
-            game = 'V', major = 1, minor = 1, region = 0, steam = false;
-            return true;
-
-        case 0x666BA0:  // GTA VC 1.1 (Cracked Steam Version)
-        case 0xA402ED:  // GTA VC 1.1 (Encrypted Steam Version)
-            game = 'V', major = 1, minor = 1, region = 0, steam = true;
-            return true;
-    
-        case 0x82457C:  // GTA SA 1.0 US Cracked
-        case 0x824570:  // GTA SA 1.0 US Compact
-            game = 'S', major = 1, minor = 0, region = 'U', steam = false;
-            cracker = injector::ReadMemory<uint8_t>(raw_ptr(0x406A20), true) == 0xE9? 'H' : 0;
-            return true;
-
-        case 0x8245BC:  // GTA SA 1.0 EU Cracked (??????)
-        case 0x8245B0:  // GTA SA 1.0 EU Cracked
-            game = 'S', major = 1, minor = 0, region = 'E', steam = false;
-            cracker = injector::ReadMemory<uint8_t>(raw_ptr(0x406A20), true) == 0xE9? 'H' : 0;  // just to say 'securom'
-            return true;
-            
-        case 0x8252FC:  // GTA SA 1.1 US Cracked
-            game = 'S', major = 1, minor = 1, region = 'U', steam = false;
-            return true;
-            
-        case 0x82533C:  // GTA SA 1.1 EU Cracked
-            game = 'S', major = 1, minor = 1, region = 'E', steam = false;
-            return true;
-            
-        case 0x85EC4A:  // GTA SA 3.0 (Cracked Steam Version)
-        case 0xD3C3DB:  // GTA SA 3.0 (Encrypted Steam Version)
-            game = 'S', major = 3, minor = 0, region = 0, steam = true;
-            return true;
-
-        case 0xC965AD:  // GTA IV 1.0.0.4 US
-            game = 'I', major = 1, minor = 0, majorRevision = 0, minorRevision = 4, region = 'U', steam = false;
-            return true;
-
-        case 0xD0D011:  // GTA IV 1.0.0.7 US
-            game = 'I', major = 1, minor = 0, majorRevision = 0, minorRevision = 7, region = 'U', steam = false;
-            return true;
-
-        case 0xCF529E:  // GTA IV 1.0.0.8 US
-            game = 'I', major = 1, minor = 0, majorRevision = 0, minorRevision = 8, region = 'U', steam = false;
-            return true;
-
-        case 0xD0AF06:  // GTA EFLC 1.1.2.0 US
-            game = 'E', major = 1, minor = 1, majorRevision = 2, minorRevision = 0, region = 'U', steam = false;
-            return true;
-
-        case 0xCF4BAD:  // GTA EFLC 1.1.3.0 US
-            game = 'E', major = 1, minor = 1, majorRevision = 3, minorRevision = 0, region = 'U', steam = false;
-            return true;
-
-        default:
-            return false;
-    }
-}
-
-#endif
 
 
 } // namespace 
